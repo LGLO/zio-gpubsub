@@ -6,20 +6,28 @@ import org.asynchttpclient.AsyncHttpClient
 import zio.Task
 import org.asynchttpclient.ListenableFuture
 import org.asynchttpclient.Response
+import zio.gpubsub.ZioGPubSubClient.Created
+import zio.gpubsub.ZioGPubSubClient.AlreadyExists
+import zio.gpubsub.ZioGPubSubClient.CreationResult
 
 trait ZioGPubSubClient {
   def client: ZioGPubSubClient.Service
 }
 
 object ZioGPubSubClient {
+
+  sealed trait CreationResult
+  case object Created extends CreationResult
+  case object AlreadyExists extends CreationResult
+  final class NotCreated(val reason: String) extends CreationResult
   trait Service {
-    def createTopic(topic: String): Task[Boolean]
-    def createSubscription(name: String, topic: String): Task[Boolean]
+    def createTopic(topic: String): Task[CreationResult]
+    def createSubscription(name: String, topic: String): Task[CreationResult]
     def publish(topic: String, msgs: Seq[PublishMessage]): Task[Seq[String]]
     def pull(subscription: String, maxMessages: Int, returnImmediately: Boolean = false): Task[Seq[ReceivedMessage]]
   }
 }
-
+ 
 class ProdZioGPubSubClient(
     client: AsyncHttpClient,
     config: GPubSubConfig,
@@ -29,13 +37,13 @@ class ProdZioGPubSubClient(
   val isEmulated = true //test for URL
   val projectId = config.projectId
   val projectPrefix = "projects/" + projectId
-  val urlPrefix = config.getHost + "/v1/" + projectPrefix
+  val urlPrefix = config.host + "/v1/" + projectPrefix
 
-  private def get(url: String): ZIO[Any, Throwable, String] = {
-    Task
-      .fromCompletionStage(ZIO.effect(client.prepareGet(url).execute().toCompletableFuture()))
-      .map(_.getResponseBody())
-  }
+  // private def get(url: String): ZIO[Any, Throwable, String] = {
+  //   Task
+  //     .fromCompletionStage(ZIO.effect(client.prepareGet(url).execute().toCompletableFuture()))
+  //     .map(_.getResponseBody())
+  // }
 
   private def toTask[R](lf: ListenableFuture[R]): Task[R] = Task.fromCompletionStage(() => lf.toCompletableFuture())
 
@@ -61,11 +69,16 @@ class ProdZioGPubSubClient(
       }
       .flatMap(toTask)
 
-  def createTopic(topic: String): Task[Boolean] = put(s"/topics/$topic", None).map(_.getStatusCode == 200)
+  private def responseToCreationCode(result: Response) =
+    if (result.getStatusCode() == 200) Created
+    else if (result.getStatusCode() == 409) AlreadyExists
+    else new ZioGPubSubClient.NotCreated(s"status code = ${result.getStatusCode}, body = ${result.getResponseBody()}")
 
-  def createSubscription(name: String, topic: String): Task[Boolean] =
+  def createTopic(topic: String): Task[CreationResult] = put(s"/topics/$topic", None).map(responseToCreationCode)
+
+  def createSubscription(name: String, topic: String): Task[CreationResult] =
     put("/subscriptions/" + name, Some(s"""{"topic":"${projectPrefix}/topics/$topic"}""".getBytes))
-      .map(_.getStatusCode == 200)
+      .map(responseToCreationCode)
 
   def publish(topic: String, msgs: Seq[PublishMessage]) =
     post("/topics/" + topic + ":publish", Some(serdes(msgs))).map { response =>
@@ -75,7 +88,11 @@ class ProdZioGPubSubClient(
   def pull(subscription: String, maxMessages: Int, returnImmediately: Boolean = false) =
     post("/subscriptions/" + subscription + ":pull", Some(serdes(new PullRequest(returnImmediately, maxMessages))))
       .map { response =>
-        serdes.parsePullResponse(response.getResponseBodyAsBytes).get.receivedMessages.getOrElse(Seq.empty[ReceivedMessage])
+        serdes
+          .parsePullResponse(response.getResponseBodyAsBytes)
+          .get
+          .receivedMessages
+          .getOrElse(Seq.empty[ReceivedMessage])
       }
 }
 
