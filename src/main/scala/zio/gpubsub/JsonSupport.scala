@@ -1,7 +1,8 @@
 package zio.gpubsub
 
-import scala.util.Try
 import java.time.Instant
+
+import scala.util.Try
 
 /** Implementation of this trait is required for ... */
 trait JsonSerdes {
@@ -61,7 +62,7 @@ object SprayJsonSupport {
     new ReceivedMessage(new AckId(fields("ackId").convertTo[String]), fields("message").convertTo[PullMessage])
   }
 
-  private implicit val pullResponseReader: RootJsonReader[PullResponse] = 
+  private implicit val pullResponseReader: RootJsonReader[PullResponse] =
     js => new PullResponse(js.asJsObject.fields.get("receivedMessages").map(_.convertTo[Seq[ReceivedMessage]]))
   implicit object SprayJsonSerdes extends JsonSerdes {
     override def apply(msgs: Seq[PublishMessage]): Array[Byte] =
@@ -75,7 +76,6 @@ object SprayJsonSupport {
 
     override def parsePullResponse(bytes: Array[Byte]): Try[PullResponse] =
       Try(JsonParser(bytes).fromJson[PullResponse])
-
 
   }
 }

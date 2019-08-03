@@ -1,18 +1,18 @@
 package zio.gpubsub
 
-import org.specs2.Specification
-import org.specs2.specification.BeforeAll
-import scala.io.Source
-import zio.testkit.TestClock
-import java.time.ZoneId
-import org.asynchttpclient.{Dsl => AHC}
-import java.time.Instant
-import zio.clock.Clock
-import zio.{Ref, UIO, ZIO}
-import org.specs2.specification.AfterAll
+import java.time.{Instant, ZoneId}
+
 import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 import com.github.tomakehurst.wiremock.client.WireMock._
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration
+import org.asynchttpclient.{Dsl => AHC}
+import org.specs2.Specification
+import org.specs2.specification.{AfterAll, BeforeAll}
+import zio.clock.Clock
+import zio.test.mock.MockClock
+import zio.{Ref, UIO, ZIO}
+
+import scala.io.Source
 
 class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with TestRuntime {
 
@@ -68,7 +68,7 @@ class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with 
           maybeAuth <- getAuthWithGCloudAuthenticator
         } yield maybeAuth
       }
-    ) === Auth("test-token-value", Instant.ofEpochSecond(2234567890L + 3600))
+    ) === AccessToken("test-token-value", Instant.ofEpochSecond(2234567890L + 3600))
 
   def authWrongBody =
     unsafeRun(
@@ -112,10 +112,10 @@ class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with 
 
   private def makeClock(currentTimeSeconds: Long): UIO[Clock] =
     Ref
-      .make(TestClock.Data(0, currentTimeSeconds * 1000, List.empty, ZoneId.of("UTC")))
+      .make(MockClock.Data(0, currentTimeSeconds * 1000, List.empty, ZoneId.of("UTC")))
       .map { data =>
         new Clock {
-          val clock = TestClock(data)
+          val clock = MockClock.Mock(data)
         }
       }
 }

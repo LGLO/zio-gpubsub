@@ -1,7 +1,7 @@
 package zio.gpubsub
 
-import java.security.{KeyFactory, PrivateKey}
 import java.security.spec.PKCS8EncodedKeySpec
+import java.security.{KeyFactory, PrivateKey}
 
 object KeyUtil {
 

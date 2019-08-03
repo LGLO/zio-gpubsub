@@ -1,8 +1,8 @@
 package zio.gpubsub
 
-import scala.sys
 import spray.json.DefaultJsonProtocol._
 import spray.json.JsonParser
+import zio.system.System
 import zio.{Task, ZIO}
 
 /**
@@ -16,24 +16,25 @@ object GPubSubConfig {
   val defaultGoogleTokenUrl = "https://www.googleapis.com/oauth2/v4/token"
   val defaultGoogleApisUrl = "https://www.googleapis.com"
 
-  def readFromEnv(): Task[GPubSubConfig] = readFromEnv(sys.props.toMap ++ sys.env)
-
-  def readFromEnv(env: Map[String, String]): Task[GPubSubConfig] =
-    ZIO.effect {
-      env
-        .get("GOOGLE_APPLICATION_CREDENTIALS")
-        .map(readGoogleApplicationCredentialsFile)
-        .orElse {
-          (env.get("PUBSUB_EMULATOR_HOST").zip(env.get("PUBSUB_PROJECT_ID")).headOption).map {
-            case (host, appId) => ZIO.succeed(GPubSubConfig(EmulatorAuthenticator, "http://" + host, appId))
+  def readFromEnv(): ZIO[System, Throwable, GPubSubConfig] =
+    propertyOrEnv("GOOGLE_APPLICATION_CREDENTIALS").flatMap {
+      _.map(readGoogleApplicationCredentialsFile)
+        .getOrElse {
+          propertyOrEnv("PUBSUB_EMULATOR_HOST").zip(propertyOrEnv("PUBSUB_PROJECT_ID")).flatMap {
+            case (Some(host), Some(appId)) => ZIO.succeed(GPubSubConfig(EmulatorAuthenticator, "http://" + host, appId))
+            case _ =>
+              val msg =
+                "Either 'GOOGLE_APPLICATION_CREDENTIALS' or 'PUBSUB_EMULATOR_HOST' and 'PUBSUB_PROJECT_ID' have to be set!"
+              ZIO.fail(new Exception(msg))
           }
         }
-        .getOrElse {
-          val msg =
-            "Either 'GOOGLE_APPLICATION_CREDENTIALS' or 'PUBSUB_EMULATOR_HOST' and 'PUBSUB_PROJECT_ID' have to be set!"
-          ZIO.fail(new Exception(msg))
-        }
-    }.flatten
+    }
+
+  private def propertyOrEnv(key: String): ZIO[System, Throwable, Option[String]] =
+    zio.system.property(key).flatMap {
+      case Some(value) => ZIO.succeed(Some(value))
+      case None        => zio.system.env(key)
+    }
 
   def readGoogleApplicationCredentialsFile(path: String): Task[GPubSubConfig] =
     Task.effect {

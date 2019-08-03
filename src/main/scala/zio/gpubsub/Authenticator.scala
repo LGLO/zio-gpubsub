@@ -7,30 +7,30 @@ import java.util.concurrent.TimeUnit
 import org.asynchttpclient.{AsyncHttpClient, ListenableFuture, Response}
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsonParser, RootJsonFormat}
-import zio.{Task, ZIO}
 import zio.clock.Clock
+import zio.duration.Duration
 import zio.interop.javaconcurrent._
+import zio.{Ref, Task, ZIO}
 
 sealed trait Authenticator {
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, Auth]]
+  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]]
 }
 
 case object EmulatorAuthenticator extends Authenticator {
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, Auth]] = None
+  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]] = None
 }
 
 case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, authUrl: String) extends Authenticator {
 
   import GCloudAuthenticator._
 
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, Auth]] =
+  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]] =
     Some(
       for {
-        clock <- ZIO.environment[Clock]
-        currentTime <- clock.clock.currentTime(TimeUnit.SECONDS)
+        currentTime <- zio.clock.currentTime(TimeUnit.SECONDS)
         signed <- makeJwt(currentTime)
         response <- requestToken(signed)(client)
-        auth <- responseToAuth(response, currentTime)
+        auth <- responseToAccessToken(response, currentTime)
       } yield auth
     )
 
@@ -61,12 +61,15 @@ case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, auth
       .flatMap(toTask)
   }
 
-  private def responseToAuth(response: Response, currentTimeSeconds: Long) =
+  private def responseToAccessToken(response: Response, currentTimeSeconds: Long) =
     Task.effect {
       if (response.getStatusCode() == 200) {
         val authResponse = JsonParser(response.getResponseBody).fromJson[AuthResponse]
         val auth =
-          new Auth(authResponse.access_token, Instant.ofEpochSecond(currentTimeSeconds + authResponse.expires_in))
+          new AccessToken(
+            authResponse.access_token,
+            Instant.ofEpochSecond(currentTimeSeconds + authResponse.expires_in)
+          )
         Task.succeed(auth)
       } else Task.fail(new Exception(s"Invalid response code ${response.getStatusCode()}, expected 200."))
     }.flatten
@@ -84,4 +87,38 @@ object GCloudAuthenticator {
   private implicit val oAuthResponseJsonFormat: RootJsonFormat[AuthResponse] = jsonFormat3(AuthResponse)
 }
 
-case class Auth(accessToken: String, validUntil: Instant)
+case class AccessToken(value: String, validUntil: Instant) {
+  override def equals(other: Any): Boolean = other match {
+    case that: AccessToken =>
+      value == that.value && validUntil == that.validUntil
+    case _ => false
+  }
+
+  override def hashCode: Int = java.util.Objects.hash(value, validUntil)
+
+  override def toString: String =
+    "AccessToken(value=" + value + ",validUntil=" + validUntil + ")"
+}
+
+class TokenRefresher(
+    getToken: ZIO[Clock, Throwable, AccessToken],
+    tokenRef: Ref[Option[AccessToken]],
+    margin: Duration
+) {
+
+  val getFreshToken =
+    for {
+      currentTime <- zio.clock.currentTime(TimeUnit.MILLISECONDS)
+      tokenOpt <- tokenRef.get
+      validToken <- tokenOpt.fold(getToken)(
+        token =>
+          if (isValidForLongEnough(token, currentTime)) ZIO.succeed(token)
+          else getToken
+      )
+      _ <- tokenRef.set(Some(validToken))
+    } yield validToken
+
+  private def isValidForLongEnough(token: AccessToken, currentTimeMillis: Long) =
+    token.validUntil.toEpochMilli > currentTimeMillis + margin.toMillis
+
+}

@@ -1,12 +1,10 @@
 package zio.gpubsub
-import com.github.tomakehurst.wiremock.WireMockServer
-import com.github.tomakehurst.wiremock._
-import com.github.tomakehurst.wiremock.client.WireMock._
-import zio.Task
-import zio.ZManaged
-import zio.{ZIO, UIO}
-import zio.console.{Console, putStrLn}
 import java.util.concurrent.Semaphore
+
+import com.github.tomakehurst.wiremock.WireMockServer
+import com.github.tomakehurst.wiremock.client.WireMock._
+import zio.console.{Console, putStrLn}
+import zio.{Task, UIO, ZIO, ZManaged}
 
 object WireMockUtil {
 

@@ -1,9 +1,8 @@
 package zio.gpubsub
 
-import zio.ZIO
-import zio.Queue
-import zio.duration.Duration
+import zio.{Queue, ZIO}
 import zio.clock.Clock
+import zio.duration.Duration
 
 class GPubSubSource(client: ZioGPubSubClient.Service) {
   def pull(

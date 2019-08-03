@@ -1,14 +1,12 @@
 package zio.gpubsub
 
-import zio.ZIO
+import java.util.concurrent.TimeUnit
+
+import org.asynchttpclient.{AsyncHttpClient, ListenableFuture, Response}
+import zio.{Ref, Task, ZIO}
+import zio.clock.Clock
+import zio.gpubsub.ZioGPubSubClient.{AlreadyExists, Created, CreationResult}
 import zio.interop.javaconcurrent._
-import org.asynchttpclient.AsyncHttpClient
-import zio.Task
-import org.asynchttpclient.ListenableFuture
-import org.asynchttpclient.Response
-import zio.gpubsub.ZioGPubSubClient.Created
-import zio.gpubsub.ZioGPubSubClient.AlreadyExists
-import zio.gpubsub.ZioGPubSubClient.CreationResult
 
 trait ZioGPubSubClient {
   def client: ZioGPubSubClient.Service
@@ -23,15 +21,16 @@ object ZioGPubSubClient {
   trait Service {
     def createTopic(topic: String): Task[CreationResult]
     def createSubscription(name: String, topic: String): Task[CreationResult]
-    def publish(topic: String, msgs: Seq[PublishMessage]): Task[Seq[String]]
+    def publish(topic: String, msgs: Seq[PublishMessage]): ZIO[Clock, Throwable, Seq[String]]
     def pull(subscription: String, maxMessages: Int, returnImmediately: Boolean = false): Task[Seq[ReceivedMessage]]
   }
 }
- 
+
 class ProdZioGPubSubClient(
     client: AsyncHttpClient,
     config: GPubSubConfig,
-    serdes: JsonSerdes
+    serdes: JsonSerdes,
+    auth: Ref[Option[AccessToken]]
 ) extends ZioGPubSubClient.Service {
 
   val isEmulated = true //test for URL
@@ -81,9 +80,11 @@ class ProdZioGPubSubClient(
       .map(responseToCreationCode)
 
   def publish(topic: String, msgs: Seq[PublishMessage]) =
-    post("/topics/" + topic + ":publish", Some(serdes(msgs))).map { response =>
-      serdes.parsePublishResponse(response.getResponseBodyAsBytes()).get.messageIds
-    }
+    for {
+      authHeader <- getAuthHeader
+      response <- post("/topics/" + topic + ":publish", Some(serdes(msgs)))
+      publishResponse <- Task.effect(serdes.parsePublishResponse(response.getResponseBodyAsBytes()).get)
+    } yield publishResponse.messageIds
 
   def pull(subscription: String, maxMessages: Int, returnImmediately: Boolean = false) =
     post("/subscriptions/" + subscription + ":pull", Some(serdes(new PullRequest(returnImmediately, maxMessages))))
@@ -94,6 +95,19 @@ class ProdZioGPubSubClient(
           .receivedMessages
           .getOrElse(Seq.empty[ReceivedMessage])
       }
+
+  private def getAuthHeader: ZIO[Clock, Throwable, Seq[(String, String)]] =
+    config.authenticator(client) match {
+      case None => ZIO.succeed(Seq.empty)
+      case Some(getAuth) =>
+        for {
+          currentTime <- zio.clock.currentTime(TimeUnit.SECONDS)
+          maybeAuth <- auth.get
+          currentAuthIsValid = maybeAuth.exists(_.validUntil.getEpochSecond > currentTime + 60)
+          newAuth <- if (currentAuthIsValid) ZIO.succeed(maybeAuth.get) else getAuth
+          _ <- auth.set(Some(newAuth))
+        } yield Seq("auth-bearer" -> newAuth.value)
+    }
 }
 
 object ProdZioGPubSubClient {
@@ -104,5 +118,6 @@ object ProdZioGPubSubClient {
     for {
       client <- getClient
       config <- getConfig
-    } yield new ProdZioGPubSubClient(client, config, SprayJsonSupport.SprayJsonSerdes)
+      auth <- Ref.make(Option.empty[AccessToken])
+    } yield new ProdZioGPubSubClient(client, config, SprayJsonSupport.SprayJsonSerdes, auth)
 }

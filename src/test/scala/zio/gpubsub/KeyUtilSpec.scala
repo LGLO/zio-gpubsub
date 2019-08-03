@@ -1,7 +1,8 @@
 package zio.gpubsub
 
-import scala.io.Source
 import org.specs2.Specification
+
+import scala.io.Source
 
 class KeyUtilSpec extends Specification {
   val privateKeyFileLines = Source.fromInputStream(getClass.getResourceAsStream("/rsa_private.pem")).getLines

@@ -1,11 +1,12 @@
 package zio.gpubsub
 
+import java.io.{File, FileOutputStream, PrintWriter}
+
 import org.specs2.Specification
 import org.specs2.specification.BeforeAll
+import zio.test.mock.MockSystem
+
 import scala.io.Source
-import java.io.File
-import java.io.FileOutputStream
-import java.io.PrintWriter
 
 class GPubSubConfigSpec extends Specification with BeforeAll with TestRuntime {
 
@@ -22,17 +23,25 @@ class GPubSubConfigSpec extends Specification with BeforeAll with TestRuntime {
     fos.close()
   }
 
-  def emulatorConfig = {
-    val env = Map("PUBSUB_EMULATOR_HOST" -> "192.168.8.1:12340", "PUBSUB_PROJECT_ID" -> "test-project")
-    val config = unsafeRun(GPubSubConfig.readFromEnv(env))
-    config === GPubSubConfig(EmulatorAuthenticator, "http://192.168.8.1:12340", "test-project")
-  }
+  def emulatorConfig =
+    unsafeRun {
+      val props = Map("PUBSUB_EMULATOR_HOST" -> "192.168.8.1:12340", "PUBSUB_PROJECT_ID" -> "test-project")
+      for {
+        sys <- MockSystem.make(MockSystem.Data(properties = props))
+        config <- GPubSubConfig.readFromEnv.provide(sys)
+      } yield config
+    } === GPubSubConfig(EmulatorAuthenticator, "http://192.168.8.1:12340", "test-project")
 
   def credentialsFile = {
-    val config = unsafeRun(GPubSubConfig.readFromEnv(Map("GOOGLE_APPLICATION_CREDENTIALS" -> credentialsFilePath)))
-    val authenticator =
+    val envs = Map("GOOGLE_APPLICATION_CREDENTIALS" -> credentialsFilePath)
+    val expectedAuthenticator =
       GCloudAuthenticator("johnny.b.goode@test.com", expectedPrivateKey, "https://www.googleapis.com/oauth2/v4/token")
-    config === GPubSubConfig(authenticator, "https://www.googleapis.com", "my-project")
+    unsafeRun(
+      for {
+        sys <- MockSystem.make(MockSystem.Data(envs = envs))
+        config <- GPubSubConfig.readFromEnv.provide(sys)
+      } yield config
+    ) === GPubSubConfig(expectedAuthenticator, "https://www.googleapis.com", "my-project")
   }
 
   private def readResource(path: String): List[String] =

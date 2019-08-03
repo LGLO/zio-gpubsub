@@ -26,6 +26,6 @@ object Main { //extends App {
     1},_ => 0)
 
   def run(args: List[String]): ZIO[Console with Clock, Nothing, Int] = readConfig
-    
-*/
+
+ */
 }
