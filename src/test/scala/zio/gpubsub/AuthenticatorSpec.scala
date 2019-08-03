@@ -1,11 +1,11 @@
 package zio.gpubsub
 
 import java.time.Instant
+import java.net.http.{HttpClient => JHttpClient}
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
-import org.asynchttpclient.{Dsl => AHC}
 import org.specs2.Specification
 import org.specs2.specification.{AfterAll, BeforeAll}
 import zio.clock.Clock
@@ -114,9 +114,9 @@ class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with 
   def makeDeps(currentClockSeconds: Long): Task[Clock with HttpClient] =
     for {
       clockMock <- MockClock.makeMock(MockClock.DefaultData.copy(currentTimeMillis = currentClockSeconds * 1000))
-      asyncHttpClient <- Task.effect(AHC.asyncHttpClient())
+      httpClient <- Task.effect(JHttpClient.newBuilder.build)
     } yield new HttpClient with MockClock {
       val clock: MockClock.Service[Any] = clockMock
-      val client: HttpClient.Service[Any] = new HttpClient.Live(asyncHttpClient)
+      val client: HttpClient.Service[Any] = new HttpClient.Live(httpClient)
     }
 }

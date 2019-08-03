@@ -2,11 +2,15 @@ package zio.gpubsub
 
 import java.util.concurrent.TimeUnit
 
-import org.asynchttpclient.{Dsl => AHC, Response}
 import zio.{Ref, Task, ZIO}
 import zio.clock.Clock
 import zio.gpubsub.ZioGPubSubClient.{AlreadyExists, Created, CreationResult}
 import zio.gpubsub.httpclient.HttpClient
+import java.net.http.HttpResponse
+import java.net.http.HttpRequest
+import java.net.URI
+import java.net.http.HttpRequest.BodyPublishers
+import java.net.http.HttpResponse.BodyHandlers
 
 trait ZioGPubSubClient {
   def client: ZioGPubSubClient.Service
@@ -47,28 +51,28 @@ class ProdZioGPubSubClient(
   //     .map(_.getResponseBody())
   // }
 
-  private def post(path: String, jsonBody: Option[Array[Byte]]): ZIO[HttpClient, Throwable, Response] = {
-    val builder0 = AHC.post(urlPrefix + path)
-    val builder1 = jsonBody.fold(builder0) { body =>
-      builder0.addHeader("content-type", Seq("application/json")).setBody(body)
+  private def post(path: String, jsonBody: Option[Array[Byte]]): ZIO[HttpClient, Throwable, HttpResponse[String]] = {
+    val builder0 = HttpRequest.newBuilder(URI.create(urlPrefix + path))
+    val builder1 = jsonBody.fold(builder0.POST(BodyPublishers.noBody)) { body =>
+      builder0.header("content-type", "application/json").POST(BodyPublishers.ofByteArray(body))
     }
     val request = builder1.build()
-    zio.gpubsub.httpclient.execute(request)
+    zio.gpubsub.httpclient.execute(request, BodyHandlers.ofString)
   }
 
-  private def put(path: String, jsonBody: Option[Array[Byte]]): ZIO[HttpClient, Throwable, Response] = {
-    val builder0 = AHC.put(urlPrefix + path)
-    val builder1 = jsonBody.fold(builder0) { body =>
-      builder0.addHeader("content-type", Seq("application/json")).setBody(body)
+  private def put(path: String, jsonBody: Option[Array[Byte]]): ZIO[HttpClient, Throwable, HttpResponse[String]] = {
+    val builder0 = HttpRequest.newBuilder(URI.create(urlPrefix + path))
+    val builder1 = jsonBody.fold(builder0.PUT(BodyPublishers.noBody)) { body =>
+      builder0.header("content-type", "application/json").PUT(BodyPublishers.ofByteArray(body))
     }
-    val request = builder1.build
-    zio.gpubsub.httpclient.execute(request)
+    val request = builder1.build()
+    zio.gpubsub.httpclient.execute(request, BodyHandlers.ofString)
   }
 
-  private def responseToCreationCode(result: Response) =
-    if (result.getStatusCode() == 200) Created
-    else if (result.getStatusCode() == 409) AlreadyExists
-    else new ZioGPubSubClient.NotCreated(s"status code = ${result.getStatusCode}, body = ${result.getResponseBody()}")
+  private def responseToCreationCode(result: HttpResponse[String]) =
+    if (result.statusCode == 200) Created
+    else if (result.statusCode == 409) AlreadyExists
+    else new ZioGPubSubClient.NotCreated(s"status code = ${result.statusCode}, body = ${result.body}")
 
   def createTopic(topic: String): ZIO[HttpClient, Throwable, CreationResult] =
     put(s"/topics/$topic", None).map(responseToCreationCode)
@@ -81,14 +85,14 @@ class ProdZioGPubSubClient(
     for {
       authHeader <- getAuthHeader
       response <- post("/topics/" + topic + ":publish", Some(serdes(msgs)))
-      publishResponse <- Task.effect(serdes.parsePublishResponse(response.getResponseBodyAsBytes()).get)
+      publishResponse <- Task.effect(serdes.parsePublishResponse(response.body.getBytes).get)
     } yield publishResponse.messageIds
 
   def pull(subscription: String, maxMessages: Int, returnImmediately: Boolean = false) =
     post("/subscriptions/" + subscription + ":pull", Some(serdes(new PullRequest(returnImmediately, maxMessages))))
       .map { response =>
         serdes
-          .parsePullResponse(response.getResponseBodyAsBytes)
+          .parsePullResponse(response.body.getBytes)
           .get
           .receivedMessages
           .getOrElse(Seq.empty[ReceivedMessage])

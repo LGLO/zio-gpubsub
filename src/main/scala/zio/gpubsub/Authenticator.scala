@@ -1,10 +1,12 @@
 package zio.gpubsub
 
+import java.net.http.{HttpRequest, HttpResponse}
+import java.net.http.HttpRequest.BodyPublishers
+import java.net.{URI, URLEncoder}
 import java.security.{PrivateKey, Signature}
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-import org.asynchttpclient.{Dsl => AHC, Response}
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsonParser, RootJsonFormat}
 import zio.clock.Clock
@@ -39,7 +41,7 @@ case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, auth
     val iat = currentTimeSeconds
     val exp = iat + 3600
     val claim = s"""{"scope":"$jwtScope","aud":"$authUrl","iss":"$clientEmail","exp":$exp,"iat":$iat}"""
-    val data = jwtHeader ++ dot ++ urlEncoder.encode(claim.getBytes("UTF-8"))
+    val data = jwtHeader ++ dot ++ base64UrlEncoder.encode(claim.getBytes("UTF-8"))
     sign(data).map(signature => data ++ dot ++ signature)
   }
 
@@ -47,38 +49,41 @@ case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, auth
     val signer = Signature.getInstance("SHA256withRSA", "SunRsaSign")
     signer.initSign(privateKey)
     signer.update(data)
-    urlEncoder.encode(signer.sign)
+    base64UrlEncoder.encode(signer.sign)
   }
 
-  private def requestToken(jwt: Array[Byte]): ZIO[HttpClient, Throwable, Response] =
+  private def requestToken(jwt: Array[Byte]): ZIO[HttpClient, Throwable, HttpResponse[String]] =
     zio.gpubsub.httpclient.execute(
-      AHC
-        .post(authUrl)
-        .addFormParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-        .addFormParam("assertion", new String(jwt))
-        .build()
+      HttpRequest
+        .newBuilder(URI.create(authUrl))
+        .POST(BodyPublishers.ofString(bodyConstantPart + URLEncoder.encode(new String(jwt))))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .build(),
+      HttpResponse.BodyHandlers.ofString()
     )
 
-  private def responseToAccessToken(response: Response, currentTimeSeconds: Long) =
+  private def responseToAccessToken(response: HttpResponse[String], currentTimeSeconds: Long) =
     Task.effect {
-      if (response.getStatusCode() == 200) {
-        val authResponse = JsonParser(response.getResponseBody).fromJson[AuthResponse]
+      if (response.statusCode == 200) {
+        val authResponse = JsonParser(response.body).fromJson[AuthResponse]
         val auth =
           new AccessToken(
             authResponse.access_token,
             Instant.ofEpochSecond(currentTimeSeconds + authResponse.expires_in)
           )
         Task.succeed(auth)
-      } else Task.fail(new Exception(s"Invalid response code ${response.getStatusCode()}, expected 200."))
+      } else Task.fail(new Exception(s"Invalid response code ${response.statusCode}, expected 200."))
     }.flatten
 
 }
 
 object GCloudAuthenticator {
   private val jwtScope = "https://www.googleapis.com/auth/pubsub"
-  private val urlEncoder = java.util.Base64.getUrlEncoder()
-  private val jwtHeader = urlEncoder.encode("""{"alg":"RS256","typ":"JWT"}""".getBytes("UTF-8"))
+  private val base64UrlEncoder = java.util.Base64.getUrlEncoder()
+  private val jwtHeader = base64UrlEncoder.encode("""{"alg":"RS256","typ":"JWT"}""".getBytes("UTF-8"))
   private val dot = ".".getBytes("UTF-8")
+  private val bodyConstantPart =
+    URLEncoder.encode("grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=")
 
   private[gpubsub] case class AuthResponse(access_token: String, token_type: String, expires_in: Int)
   private implicit val oAuthResponseJsonFormat: RootJsonFormat[AuthResponse] = jsonFormat3(AuthResponse)

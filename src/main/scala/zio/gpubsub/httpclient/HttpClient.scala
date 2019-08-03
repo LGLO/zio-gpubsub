@@ -1,9 +1,10 @@
 package zio.gpubsub.httpclient
 
-import org.asynchttpclient._
+import java.net.http.{HttpClient => JHttpClient, HttpRequest, HttpResponse}
+
 import zio.{Task, ZIO}
 import zio.interop.javaconcurrent._
-import org.asynchttpclient.ListenableFuture
+import java.net.http.HttpResponse.BodyHandler
 
 trait HttpClient {
   val client: HttpClient.Service[Any]
@@ -12,13 +13,13 @@ trait HttpClient {
 object HttpClient {
 
   trait Service[R] {
-    def execute(req: Request): ZIO[R, Throwable, Response]
+    def execute[A](req: HttpRequest, bodyHandler: BodyHandler[A]): ZIO[R, Throwable, HttpResponse[A]]
   }
 
-  class Live(client: AsyncHttpClient) extends Service[Any] {
+  class Live(client: JHttpClient) extends Service[Any] {
 
-    def execute(req: Request): ZIO[Any, Throwable, Response] = toTask(client.executeRequest(req))
-
-    private def toTask[A](lf: ListenableFuture[A]): Task[A] = Task.fromCompletionStage(() => lf.toCompletableFuture())
+    def execute[A](req: HttpRequest, bodyHandler: BodyHandler[A]): ZIO[Any, Throwable, HttpResponse[A]] =
+      Task.fromCompletionStage(() => client.sendAsync(req, bodyHandler))
   }
+
 }
