@@ -1,6 +1,6 @@
 package zio.gpubsub
 
-import java.time.{Instant, ZoneId}
+import java.time.Instant
 
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock._
@@ -9,8 +9,9 @@ import org.asynchttpclient.{Dsl => AHC}
 import org.specs2.Specification
 import org.specs2.specification.{AfterAll, BeforeAll}
 import zio.clock.Clock
+import zio.gpubsub.httpclient.HttpClient
 import zio.test.mock.MockClock
-import zio.{Ref, UIO, ZIO}
+import zio.{Task, UIO, ZIO}
 
 import scala.io.Source
 
@@ -49,15 +50,15 @@ class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with 
   }
   private def getAuthWithGCloudAuthenticator =
     for {
-      clock <- makeClock(2234567890L)
-      auth <- gcloudAuthenticator(AHC.asyncHttpClient()) match {
-        case Some(auth) => auth.provide(clock)
+      dependencies <- makeDeps(2234567890L)
+      auth <- gcloudAuthenticator.getToken match {
+        case Some(auth) => auth.provide(dependencies)
         case None       => ZIO.fail(new Exception("Expected Some(auth)"))
       }
     } yield auth
 
   def emulatorAuthenticator = {
-    EmulatorAuthenticator(AHC.asyncHttpClient()) must beEmpty
+    EmulatorAuthenticator.getToken must beEmpty
   }
 
   def authHappyPath =
@@ -110,12 +111,12 @@ class AuthenticatorSpec extends Specification with BeforeAll with AfterAll with 
         .either
     ).fold(_.getMessage, _ => "wrong") === "Invalid response code 500, expected 200."
 
-  private def makeClock(currentTimeSeconds: Long): UIO[Clock] =
-    Ref
-      .make(MockClock.Data(0, currentTimeSeconds * 1000, List.empty, ZoneId.of("UTC")))
-      .map { data =>
-        new Clock {
-          val clock = MockClock.Mock(data)
-        }
-      }
+  def makeDeps(currentClockSeconds: Long): Task[Clock with HttpClient] =
+    for {
+      clockMock <- MockClock.makeMock(MockClock.DefaultData.copy(currentTimeMillis = currentClockSeconds * 1000))
+      asyncHttpClient <- Task.effect(AHC.asyncHttpClient())
+    } yield new HttpClient with MockClock {
+      val clock: MockClock.Service[Any] = clockMock
+      val client: HttpClient.Service[Any] = new HttpClient.Live(asyncHttpClient)
+    }
 }

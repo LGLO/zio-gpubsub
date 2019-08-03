@@ -11,5 +11,7 @@ trait TestRuntime extends Runtime[Console with System with Random with Blocking]
   type Environment = Console with System with Random with Blocking
 
   val Platform: Platform = PlatformLive.Default
-  val Environment: Environment = new Console.Live with System.Live with Random.Live with Blocking.Live
+  val Environment: Environment = new Console.Live with System.Live with Random.Live with Blocking.Live {
+    //val client: HttpClient.Service[Any] = new HttpClient.Live(org.asynchttpclient.Dsl.asyncHttpClient())
+  }
 }

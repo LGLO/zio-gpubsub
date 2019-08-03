@@ -4,32 +4,33 @@ import java.security.{PrivateKey, Signature}
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-import org.asynchttpclient.{AsyncHttpClient, ListenableFuture, Response}
+import org.asynchttpclient.{Dsl => AHC, Response}
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsonParser, RootJsonFormat}
 import zio.clock.Clock
 import zio.duration.Duration
-import zio.interop.javaconcurrent._
+import zio.gpubsub.httpclient._
 import zio.{Ref, Task, ZIO}
+import zio.gpubsub.httpclient.HttpClient
 
 sealed trait Authenticator {
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]]
+  def getToken: Option[ZIO[Clock with HttpClient, Throwable, AccessToken]]
 }
 
 case object EmulatorAuthenticator extends Authenticator {
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]] = None
+  def getToken: Option[ZIO[Clock with HttpClient, Throwable, AccessToken]] = None
 }
 
 case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, authUrl: String) extends Authenticator {
 
   import GCloudAuthenticator._
 
-  def apply(client: AsyncHttpClient): Option[ZIO[Clock, Throwable, AccessToken]] =
+  def getToken: Option[ZIO[Clock with HttpClient, Throwable, AccessToken]] =
     Some(
       for {
         currentTime <- zio.clock.currentTime(TimeUnit.SECONDS)
         signed <- makeJwt(currentTime)
-        response <- requestToken(signed)(client)
+        response <- requestToken(signed)
         auth <- responseToAccessToken(response, currentTime)
       } yield auth
     )
@@ -48,18 +49,15 @@ case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, auth
     signer.update(data)
     urlEncoder.encode(signer.sign)
   }
-  //TODO: ZIO[ZHttpClient,...,...]
-  private def requestToken(jwt: Array[Byte])(httpClient: AsyncHttpClient): ZIO[Any, Throwable, Response] = {
-    ZIO
-      .effect {
-        httpClient
-          .preparePost(authUrl)
-          .addFormParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-          .addFormParam("assertion", new String(jwt))
-          .execute()
-      }
-      .flatMap(toTask)
-  }
+
+  private def requestToken(jwt: Array[Byte]): ZIO[HttpClient, Throwable, Response] =
+    zio.gpubsub.httpclient.execute(
+      AHC
+        .post(authUrl)
+        .addFormParam("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+        .addFormParam("assertion", new String(jwt))
+        .build()
+    )
 
   private def responseToAccessToken(response: Response, currentTimeSeconds: Long) =
     Task.effect {
@@ -74,7 +72,6 @@ case class GCloudAuthenticator(clientEmail: String, privateKey: PrivateKey, auth
       } else Task.fail(new Exception(s"Invalid response code ${response.getStatusCode()}, expected 200."))
     }.flatten
 
-  private def toTask[R](lf: ListenableFuture[R]): Task[R] = Task.fromCompletionStage(() => lf.toCompletableFuture())
 }
 
 object GCloudAuthenticator {

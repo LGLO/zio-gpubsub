@@ -3,6 +3,7 @@ package zio.gpubsub
 import zio.{Queue, ZIO}
 import zio.clock.Clock
 import zio.duration.Duration
+import zio.gpubsub.httpclient.HttpClient
 
 class GPubSubSource(client: ZioGPubSubClient.Service) {
   def pull(
@@ -10,7 +11,7 @@ class GPubSubSource(client: ZioGPubSubClient.Service) {
       queueSize: Int,
       pullMaxMessages: Int,
       backoff: Duration
-  ): ZIO[Clock, Throwable, Queue[ReceivedMessage]] =
+  ): ZIO[Clock with HttpClient, Throwable, Queue[ReceivedMessage]] =
     for {
       q <- Queue.bounded[ReceivedMessage](queueSize)
       _ <- (client
