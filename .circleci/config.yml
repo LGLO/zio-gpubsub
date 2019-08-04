@@ -22,7 +22,7 @@ jobs:
       - checkout
       - restore_cache:
           key: sbt-cache-machine
-      - run: sbt ++2.12.8! testJVM
+      - run: sbt ++2.12.8! test
       - run: sbt ++2.12.8! package packageSrc publishLocal
       - save_cache:
           key: sbt-cache-machine

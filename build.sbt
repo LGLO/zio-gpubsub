@@ -18,3 +18,6 @@ libraryDependencies ++= Seq(
 
 Compile / run / fork := true
 Global / cancelable := true
+
+addCommandAlias("fmt", "all scalafmtSbt scalafmt test:scalafmt")
+addCommandAlias("check", "all scalafmtSbtCheck scalafmtCheck test:scalafmtCheck")
