@@ -16,8 +16,8 @@ jobs:
             - "~/.m2"
 
   test212_jvm_jdk12:
-    machine:
-      image: ubuntu-1604:201903-01
+    docker:
+      - image: hseeberger/scala-sbt:12.0.1-oraclelinux7_1.2.8_2.12.8
     steps:
       - checkout
       - restore_cache:
@@ -25,7 +25,7 @@ jobs:
       - run: sbt ++2.12.8! test
       - run: sbt ++2.12.8! package packageSrc publishLocal
       - save_cache:
-          key: sbt-cache-machine
+          key: sbt-cache
           paths:
             - "~/.ivy2/cache"
             - "~/.sbt"
