@@ -5,7 +5,7 @@ import zio.clock.Clock
 import zio.duration.Duration
 import zio.gpubsub.httpclient.HttpClient
 
-class GPubSubSource(client: ZioGPubSubClient.Service) {
+class GPubSubSource(client: GPubSubClient.Service) {
   def pull(
       subscription: String,
       queueSize: Int,

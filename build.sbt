@@ -4,7 +4,7 @@ scalaVersion in ThisBuild := "2.12.8"
 
 scalacOptions += "-Ywarn-unused"
 
-val zioVersion = "1.0.0-RC10-1+83-1d3cd8a4"
+val zioVersion = "1.0.0-RC11"
 
 libraryDependencies ++= Seq(
   "dev.zio" %% "zio" % zioVersion,

@@ -9,4 +9,9 @@ Intended functionality for first release is to publish messages, pull messages, 
 *It should work with real cloud PubSub and with the emulator.*
 Code using it should be testable.
 
+# TODO
+* mdoc or docusaurus or other docs
+* circleci - build branches, PRs, publish artifact
+* crossbuild for Scala 2.12, 2.13, dotty
+
 **This is work-in-progress**
